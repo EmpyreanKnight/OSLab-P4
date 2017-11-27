@@ -3,8 +3,11 @@
 
 #include "lock.h"
 
+/**
+ * A concurrent counter type
+ */
 typedef struct {
-    int value;
+    int value;    /**< internal counter variable */
     mutex_t lock;
 } counter_t;
 
