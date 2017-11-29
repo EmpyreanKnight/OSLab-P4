@@ -12,36 +12,56 @@
 //#define LOCK_SPIN
 //#define LOCK_TWOPHASE
 //#define LOCK_RWLOCK
+#define LOCK_RWLOCK2
 //#define LOCK_PTHREAD
-#define LOCK_PRWLOCK
+//#define LOCK_PRWLOCK
 
 typedef struct {
     unsigned int flag;
 } spinlock_t;
 
-typedef struct {
-    unsigned int value;
-} mutex_t;
+typedef unsigned int mutex_t;
 
-typedef struct {
+typedef unsigned int twophase_t;
+
+/*
+typedef union {
     unsigned int value;
+    struct {
+        unsigned char locked;
+        unsigned char contended;
+    } bit_set;
 } twophase_t;
+*/
 
 typedef struct {
-    unsigned value;
-    mutex_t mutex;
+    unsigned seq;
+    mutex_t *mutex;
 } cond_t;
 
 #if defined(LOCK_PRWLOCK)
 typedef pthread_rwlock_t rwlock_t;
-#else
+#elif defined(LOCK_RWLOCK)
 typedef struct {
-    mutex_t lock;
-    cond_t read, write;
-    unsigned readers, writers;
+    mutex_t mutex;
+    char writer_preferred;
+    unsigned readers;
+    unsigned writers;
     unsigned read_waiters;
     unsigned write_waiters;
 } rwlock_t;
+#elif defined(LOCK_RWLOCK2)
+typedef struct {
+    mutex_t mutex;
+    cond_t reader_lock;
+    cond_t writer_lock;
+    unsigned readers;
+    unsigned writers;
+    unsigned read_waiters;
+    unsigned write_waiters;
+} rwlock_t;
+#else
+typedef int rwlock_t;
 #endif
 
 #if defined(LOCK_MUTEX)
@@ -52,6 +72,10 @@ typedef spinlock_t lock_t;
 typedef twophase_t lock_t;
 #elif defined(LOCK_RWLOCK)
 typedef rwlock_t lock_t;
+#elif defined(LOCK_RWLOCK2)
+typedef rwlock_t lock_t;
+#elif defined(LOCK_PTHREAD)
+typedef pthread_mutex_t lock_t;
 #elif defined(LOCK_PRWLOCK)
 typedef pthread_rwlock_t lock_t;
 #endif
@@ -76,9 +100,8 @@ void cond_signal(cond_t* lock);
 void cond_broadcast(cond_t* lock);
 
 void rwlock_init(rwlock_t* self);
-void reader_lock(rwlock_t *self);
-void reader_unlock(rwlock_t* self);
-void writer_lock(rwlock_t* self);
-void writer_unlock(rwlock_t* self);
+void rwlock_rdlock(rwlock_t *lock);
+void rwlock_wrlock(rwlock_t *lock);
+void rwlock_unlock(rwlock_t* self);
 
 #endif //P4_LOCK_H

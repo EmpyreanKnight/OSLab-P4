@@ -11,26 +11,28 @@ void list_insert(list_t *list, unsigned int key) {
         return;
     }
     new->key = key;
+    //printf("%ld In insert1\n", pthread_self()%10000);
 #if defined(LOCK_RWLOCK)
-    writer_lock(&list->lock);
+    rwlock_wrlock(&list->lock);
 #else
     lock_acquire(&list->lock);
 #endif
+    //printf("%ld In insert2\n", pthread_self()%10000);
     new->next = list->head;
     list->head = new;
-#if defined(LOCK_RWLOCK)
-    writer_unlock(&list->lock);
-#else
+    //printf("%ld Out insert1\n", pthread_self()%10000);
     lock_release(&list->lock);
-#endif
+    //printf("%ld Out insert2\n", pthread_self()%10000);
 }
 
 void list_delete(list_t* list, unsigned int key) {
+    //printf("%ld In delete1\n", pthread_self()%10000);
 #if defined(LOCK_RWLOCK)
-    writer_lock(&list->lock);
+    rwlock_wrlock(&list->lock);
 #else
     lock_acquire(&list->lock);
 #endif
+    //printf("%ld In delete2\n", pthread_self()%10000);
     node_t* cur = list->head;
     node_t* pre = NULL;
     while (cur != NULL) {
@@ -48,20 +50,20 @@ void list_delete(list_t* list, unsigned int key) {
         }
         free(cur);
     }
-#if defined(LOCK_RWLOCK)
-    writer_unlock(&list->lock);
-#else
+    //printf("%ld out delete1\n", pthread_self()%10000);
     lock_release(&list->lock);
-#endif
+    //printf("%ld out delete2\n", pthread_self()%10000);
 }
 
 void* list_lookup(list_t* list, unsigned int key) {
     void* ret = NULL;
+    //printf("%ld In lookup1\n", pthread_self()%10000);
 #if defined(LOCK_RWLOCK)
-    reader_lock(&list->lock);
+    rwlock_rdlock(&list->lock);
 #else
     lock_acquire(&list->lock);
 #endif
+    //printf("%ld In lookup2\n", pthread_self()%10000);
     node_t* cur = list->head;
     while (cur != NULL) {
         if (cur->key == key) {
@@ -70,12 +72,30 @@ void* list_lookup(list_t* list, unsigned int key) {
         }
         cur = cur->next;
     }
-#if defined(LOCK_RWLOCK)
-    reader_unlock(&list->lock);
-#else
+    //printf("%ld Out lookup1\n", pthread_self()%10000);
     lock_release(&list->lock);
-#endif
+    //printf("%ld Out lookup2\n", pthread_self()%10000);
     return ret;
+}
+
+int list_count(list_t* list) {
+    int cnt = 0;
+    node_t *cur = list->head;
+    while (cur != NULL) {
+        cnt++;
+        cur = cur->next;
+    }
+    return cnt;
+}
+
+long long list_sum(list_t* list) {
+    long long res = 0;
+    node_t *cur = list->head;
+    while (cur != NULL) {
+        res += cur->key;
+        cur = cur->next;
+    }
+    return res;
 }
 
 void list_destroy(list_t* list) {
