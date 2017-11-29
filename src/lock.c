@@ -5,12 +5,6 @@
 #include <linux/futex.h>
 #include <unistd.h>
 
-#define TYPE_MUTEX
-
-//#define TYPE_SPIN
-
-//#define TYPE_RWLOCK
-
 static long sys_futex(void *addr1, int op, int val1, struct timespec *timeout, void *addr2, int val3) {
     return syscall(SYS_futex, addr1, op, val1, timeout, addr2, val3);
 }
@@ -52,47 +46,54 @@ void mutex_release(mutex_t *lock) {
 
 void twophase_init(twophase_t *lock) {}
 
-void twophase_acquire(twophase_t *lock){}
+void twophase_acquire(twophase_t *lock) {}
 
 void twophase_release(twophase_t *lock) {}
 
 
 void cond_init(cond_t* lock) {
     lock->value = 0;
+    mutex_init(&lock->mutex);
 }
 
 void cond_wait(cond_t* lock, mutex_t* mutex) {
     int old_value = lock->value;
     mutex_release(mutex);
-    sys_futex(&lock->value, FUTEX_WAIT_PRIVATE, old_value, NULL, NULL, 0);
-    while (xchg(&lock->value, 2))  {
-        sys_futex(&lock->mutex, FUTEX_WAIT_PRIVATE, 2, NULL, NULL, 0);
-    }
+    sys_futex(&lock->value, FUTEX_WAIT, old_value, NULL, NULL, 0);
+    mutex_acquire(mutex);
 }
+
 void cond_signal(cond_t* lock) {
     mutex_acquire(&lock->mutex);
     lock->value++;
-    sys_futex(&lock->value, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
+    sys_futex(&lock->value, FUTEX_WAKE, 1, NULL, NULL, 0);
     mutex_release(&lock->mutex);
 }
 
 void cond_broadcast(cond_t* lock) {
     mutex_acquire(&lock->mutex);
     lock->value++;
-    sys_futex(&lock->value, FUTEX_REQUEUE_PRIVATE, 1, (void *) 2147483647, &lock->mutex, 0);
+    sys_futex(&lock->value, FUTEX_WAKE, 2147483647, NULL, NULL, 0);
     mutex_release(&lock->mutex);
 }
 
 void rwlock_init(rwlock_t* self) {
+#if defined(LOCK_PRWLOCK)
+    pthread_rwlock_init(self, NULL);
+#else
     self->readers = self->writers = 0;
     self->read_waiters = 0;
     self->write_waiters = 0;
     mutex_init(&self->lock);
     cond_init(&self->read);
     cond_init(&self->write);
+#endif
 }
 
 void reader_lock(rwlock_t *self) {
+#if defined(LOCK_PRWLOCK)
+    pthread_rwlock_rdlock(self);
+#else
     mutex_acquire(&self->lock);
     if (self->writers || self->write_waiters) {
         self->read_waiters++;
@@ -103,18 +104,26 @@ void reader_lock(rwlock_t *self) {
     }
     self->readers++;
     mutex_release(&self->lock);
+#endif
 }
 
 void reader_unlock(rwlock_t* self) {
+#if defined(LOCK_PRWLOCK)
+    pthread_rwlock_unlock(self);
+#else
     mutex_acquire(&self->lock);
     self->readers--;
     if (self->write_waiters) {
         cond_signal(&self->write);
     }
     mutex_release(&self->lock);
+#endif
 }
 
 void writer_lock(rwlock_t* self) {
+#if defined(LOCK_PRWLOCK)
+    pthread_rwlock_wrlock(self);
+#else
     mutex_acquire(&self->lock);
     if (self->readers || self->writers) {
         self->write_waiters++;
@@ -125,9 +134,13 @@ void writer_lock(rwlock_t* self) {
     }
     self->writers = 1;
     mutex_release(&self->lock);
+#endif
 }
 
 void writer_unlock(rwlock_t* self) {
+#if defined(LOCK_PRWLOCK)
+    pthread_rwlock_unlock(self);
+#else
     mutex_acquire(&self->lock);
     self->writers = 0;
     if (self->write_waiters) {
@@ -136,16 +149,41 @@ void writer_unlock(rwlock_t* self) {
         cond_broadcast(&self->read);
     }
     mutex_release(&self->lock);
+#endif
 }
 
-void lock_init(void* lock) {
-#ifdef TYPE_MUTEX
+void lock_init(lock_t* lock) {
+#if defined(LOCK_MUTEX)
     mutex_init(lock);
-#endif
-#ifdef TYPE_SPIN
+#elif defined(LOCK_SPIN)
     spinlock_init(lock);
-#endif
-#ifdef TYPE_TWOPHASE
+#elif defined(LOCK_TWOPHASE)
     twophase_init(lock);
+#elif defined(LOCK_PTHREAD)
+    pthread_mutex_lock(lock);
+#elif defined(LOCK_RWLOCK)
+    rwlock_init(lock);
+#elif defined(LOCK_PRWLOCK)
+    pthread_rwlock_init(lock, NULL);
+#endif
+}
+
+void lock_acquire(lock_t* lock) {
+#if defined(LOCK_MUTEX)
+    mutex_acquire(lock);
+#elif defined(LOCK_SPIN)
+    spinlock_acquire(lock);
+#elif defined(LOCK_TWOPHASE)
+    twophase_acquire(lock);
+#endif
+}
+
+void lock_release(lock_t* lock) {
+#if defined(LOCK_MUTEX)
+    mutex_release(lock);
+#elif defined(LOCK_SPIN)
+    spinlock_release(lock);
+#elif defined(LOCK_TWOPHASE)
+    twophase_release(lock);
 #endif
 }

@@ -12,7 +12,7 @@ typedef struct _node_t {
 
 typedef struct {
     node_t *head;
-    mutex_t lock;
+    lock_t lock;
 } list_t;
 
 void list_init(list_t *list);

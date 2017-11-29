@@ -2,7 +2,7 @@
 
 void list_init(list_t *list) {
     list->head = NULL;
-    mutex_init(&list->lock);
+    lock_init(&list->lock);
 }
 
 void list_insert(list_t *list, unsigned int key) {
@@ -11,14 +11,26 @@ void list_insert(list_t *list, unsigned int key) {
         return;
     }
     new->key = key;
-    mutex_acquire(&list->lock);
+#if defined(LOCK_RWLOCK)
+    writer_lock(&list->lock);
+#else
+    lock_acquire(&list->lock);
+#endif
     new->next = list->head;
     list->head = new;
-    mutex_release(&list->lock);
+#if defined(LOCK_RWLOCK)
+    writer_unlock(&list->lock);
+#else
+    lock_release(&list->lock);
+#endif
 }
 
 void list_delete(list_t* list, unsigned int key) {
-    mutex_acquire(&list->lock);
+#if defined(LOCK_RWLOCK)
+    writer_lock(&list->lock);
+#else
+    lock_acquire(&list->lock);
+#endif
     node_t* cur = list->head;
     node_t* pre = NULL;
     while (cur != NULL) {
@@ -36,12 +48,20 @@ void list_delete(list_t* list, unsigned int key) {
         }
         free(cur);
     }
-    mutex_release(&list->lock);
+#if defined(LOCK_RWLOCK)
+    writer_unlock(&list->lock);
+#else
+    lock_release(&list->lock);
+#endif
 }
 
 void* list_lookup(list_t* list, unsigned int key) {
     void* ret = NULL;
-    mutex_acquire(&list->lock);
+#if defined(LOCK_RWLOCK)
+    reader_lock(&list->lock);
+#else
+    lock_acquire(&list->lock);
+#endif
     node_t* cur = list->head;
     while (cur != NULL) {
         if (cur->key == key) {
@@ -50,7 +70,11 @@ void* list_lookup(list_t* list, unsigned int key) {
         }
         cur = cur->next;
     }
-    mutex_release(&list->lock);
+#if defined(LOCK_RWLOCK)
+    reader_unlock(&list->lock);
+#else
+    lock_release(&list->lock);
+#endif
     return ret;
 }
 

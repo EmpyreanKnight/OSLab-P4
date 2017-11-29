@@ -8,7 +8,7 @@
  */
 typedef struct {
     int value;    /**< internal counter variable */
-    mutex_t lock;
+    lock_t lock;  /**< lock for critical section */
 } counter_t;
 
 void counter_init(counter_t *c, int value);

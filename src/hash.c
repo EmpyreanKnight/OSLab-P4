@@ -7,8 +7,12 @@
  * @param size designated bucket size
  */
 void hash_init(hash_t *hash, int size) {
+    int i;
     hash->bucket_size = size;
     hash->lists = malloc(sizeof(list_t)*size);
+    for (i = 0; i < size; i++) {
+        list_init(&hash->lists[i]);
+    }
 }
 
 /**
