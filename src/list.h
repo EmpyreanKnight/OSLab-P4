@@ -21,4 +21,7 @@ void list_delete(list_t *list, unsigned int key);
 void *list_lookup(list_t *list, unsigned int key);
 void list_destroy(list_t* list);
 
+int list_count(list_t* list);
+long long list_sum(list_t* list);
+
 #endif //P4_LIST_H

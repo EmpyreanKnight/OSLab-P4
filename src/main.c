@@ -20,17 +20,20 @@ double endTimer() {
 }
 
 #define THREAD_COUNT 8
-#define MAX_N 100000
+#define MAX_N 10000
+#define SEED 1234
 
 counter_t counter;
 cond_t cond;
+spinlock_t spin;
+pthread_mutex_t p_mutex;
 mutex_t mutex;
 list_t list;
 int test_var;
 
 void* test(void* args) {
     int i;
-    srand((unsigned) time(0));
+    srand(SEED);
     for (i = 0; i < MAX_N; i++) {
         counter_increment(&counter);
     }
@@ -57,19 +60,52 @@ void* test3(void* args) {
 #define READ_RATE 80
 #define INSERT_RATE 10
 #define RANGE 1000
+
+int glob_cnt;
+long long glob_sum;
+
 void* test4(void* args) {
     int i;
-    srand((unsigned) time(0));
+    srand(SEED);
     for (i = 0; i < MAX_N; i++) {
         int rd = rand() % 100;
         if (rd < READ_RATE) {
             list_lookup(&list, rand() % RANGE);
         } else if (rd < READ_RATE + INSERT_RATE) {
-            list_insert(&list, rand() % RANGE);
+            int value = rand() % RANGE;
+            list_insert(&list, value);
+            pthread_mutex_lock(&p_mutex);
+            glob_cnt++;
+            glob_sum+=value;
+            pthread_mutex_unlock(&p_mutex);
         } else {
-            list_delete(&list, rand() % RANGE);
+            int value = rand() % RANGE;
+            if (list_lookup(&list, value) != NULL) {
+                list_delete(&list, value);
+                pthread_mutex_lock(&p_mutex);
+                glob_cnt--;
+                glob_sum -= value;
+                pthread_mutex_unlock(&p_mutex);
+            }
         }
     }
+    return NULL;
+}
+
+void* test5(void* args) {
+    int i;
+    srand(SEED);
+    for (i = 0; i < MAX_N; i++) {
+        int rd = rand() % 100;
+        if (rd < READ_RATE) {
+            counter_get_value(&counter);
+        } else if (rd < READ_RATE + INSERT_RATE) {
+            counter_increment(&counter);
+        } else {
+            counter_decrement(&counter);
+        }
+    }
+    return NULL;
 }
 
 void main1() {
@@ -108,10 +144,29 @@ void main2() {
 void main3() {
     int i;
     list_init(&list);
+    pthread_mutex_init(&p_mutex, NULL);
+    glob_sum = 0;
+    glob_cnt = 0;
     pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
     startTimer();
     for (i = 0; i < THREAD_COUNT; i++) {
         pthread_create(&threads[i], NULL, test4, (void*)i);
+    }
+    for (i = 0; i < THREAD_COUNT; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    printf("Time: %f\n", endTimer());
+    printf("Node count: %d vs %d\n", list_count(&list), glob_cnt);
+    printf("List sum: %lld vs %lld\n", list_sum(&list), glob_sum);
+}
+
+void main4() {
+    int i;
+    counter_init(&counter, 0);
+    pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
+    startTimer();
+    for (i = 0; i < THREAD_COUNT; i++) {
+        pthread_create(&threads[i], NULL, test5, (void*)i);
     }
     for (i = 0; i < THREAD_COUNT; i++) {
         pthread_join(threads[i], NULL);
