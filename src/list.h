@@ -4,6 +4,7 @@
 #include "lock.h"
 #include <stdio.h>
 #include <stdlib.h>
+#define INT_MAX 2147483647
 
 typedef struct _node_t {
     unsigned int key;
