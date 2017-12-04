@@ -2,10 +2,10 @@
 #define P4_COUNTER_H
 
 #include "lock.h"
-#define INT_MAX 2147483647
-#define INT_MIN (-INT_MAX - 1)
+
 /**
  * A concurrent counter type
+ * All operations except initialization are thread-safe
  */
 typedef struct {
     int value;    /**< internal counter variable */

@@ -19,8 +19,8 @@ double endTimer() {
     return (tve.tv_sec - tvb.tv_sec) * 1000 + (tve.tv_usec - tvb.tv_usec) / 1000.0;
 }
 
-#define THREAD_COUNT 8
-#define MAX_N 10000
+#define THREAD_COUNT 4
+#define MAX_N 100000
 #define SEED 1234
 
 counter_t counter;
@@ -41,9 +41,9 @@ void* test(void* args) {
 
 void* test2(void* args) {
     printf("thread %d to sleep.\n", (int)args);
-    mutex_acquire(&mutex);
+    twophase_acquire(&mutex);
     cond_wait(&cond, &mutex);
-    mutex_release(&mutex);
+    twophase_release(&mutex);
     test_var = test_var + 1;
     printf("thread %d waked.\n", (int)args);
     return NULL;
@@ -69,6 +69,7 @@ void* test4(void* args) {
     srand(SEED);
     for (i = 0; i < MAX_N; i++) {
         int rd = rand() % 100;
+        //pthread_mutex_lock(&p_mutex);
         if (rd < READ_RATE) {
             list_lookup(&list, rand() % RANGE);
         } else if (rd < READ_RATE + INSERT_RATE) {
@@ -88,6 +89,7 @@ void* test4(void* args) {
                 pthread_mutex_unlock(&p_mutex);
             }
         }
+        //pthread_mutex_unlock(&p_mutex);
     }
     return NULL;
 }
@@ -126,6 +128,7 @@ void main1() {
 void main2() {
     int i;
     test_var = 0;
+    mutex_init(&mutex);
     cond_init(&cond);
     pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
     startTimer();

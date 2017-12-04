@@ -4,16 +4,25 @@
 #include "lock.h"
 #include <stdio.h>
 #include <stdlib.h>
-#define INT_MAX 2147483647
 
+/**
+ * Node type in the list
+ *
+ */
 typedef struct _node_t {
-    unsigned int key;
-    struct _node_t *next;
+    unsigned int key;     /**< the key field of this node */
+    struct _node_t *next; /**< pointer to the next node in the list */
 } node_t;
 
+
+/**
+ * A concurrent list definition
+ * All operations except initialization and destroy are thread-safe
+ * Maintain a head-insert linked-list
+ */
 typedef struct {
-    node_t *head;
-    lock_t lock;
+    node_t *head; /**< a pointer to the head node */
+    lock_t lock;  /**< guarantee sequential execution in list functions */
 } list_t;
 
 void list_init(list_t *list);

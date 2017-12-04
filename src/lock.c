@@ -8,25 +8,27 @@
 
 // struct timespec wait_time = { 1, 0 };
 
+#define atomic_add(P, V) __sync_add_and_fetch((P), (V))
+
+
 static long sys_futex(void *addr1, int op, int val1, struct timespec *timeout, void *addr2, int val3) {
     return syscall(SYS_futex, addr1, op, val1, timeout, addr2, val3);
 }
 
+/**
+ * Pause the cpu core using assembly code to avoid bad performance on some machine
+ */
 static inline void cpu_pause(void) {
-    asm volatile("rep; nop" : : : "memory");
-    //asm volatile("pause\n": : :"memory");
+    //asm volatile("rep; nop" : : : "memory");
+    asm volatile("pause\n": : :"memory");
 }
 
-/*
-static inline uint xchg(volatile unsigned int *addr, unsigned int newval) {
-    uint result;
-    asm volatile("lock; xchgl %0, %1"
-    : "+m" (*addr), "=a" (result)
-    : "1" (newval)
-    : "cc");
-    return result;
-}*/
-
+/**
+ * Exchange value in addr and newval atomically
+ * @param addr   The
+ * @param newval
+ * @return
+ */
 static inline unsigned xchg(void *addr, unsigned newval) {
     asm volatile("xchgl %0, %1"
     : "=r" (newval)
@@ -44,45 +46,80 @@ static inline uint cmpxchg(volatile unsigned int *addr, unsigned int oldval, uns
     return ret;
 }
 
+/**
+ * Initialize a spin-lock, should be called before use
+ * @param lock Pointer to the spin-lock need to be initialized
+ */
 void spinlock_init(spinlock_t* lock) {
-    lock->flag = 0;
+    *lock = 0;
 }
 
+/**
+ * Try to acquire the given spin-lock
+ * If the lock currently not available, this function will keep trying until somebody release the lock
+ * @param lock Pointer to the spin-lock want to obtain
+ */
 void spinlock_acquire(spinlock_t *lock) {
-    while (xchg(&lock->flag, 1) == 1) {
+    while (xchg(lock, 1) == 1) {
         cpu_pause(); // spin-wait
     }
 }
 
+/**
+ * Release the given spin-lock
+ * Notice that release a lock not hold by itself will cause unpredictable result
+ * @param lock Pointer to the spin-lock want to release
+ */
 void spinlock_release(spinlock_t *lock) {
-    lock->flag = 0;
+    *lock = 0;
 }
 
+/**
+ * Initialize a mutex, should be called before use
+ * @param lock Pointer to the mutex need to be initialized
+ */
 void mutex_init(mutex_t *lock) {
     *lock = 0;
 }
 
+/**
+ * Try to acquire the given mutex
+ * A failed try will cause the thread sleep until another thread wake it by releasing this mutex
+ * @param lock Pointer to the mutex want to obtain
+ */
 void mutex_acquire(mutex_t *lock) {
     int value = xchg(lock, 1);
     while (value) {
-        //printf("%d lock rd: %d\n", pthread_self()%10000, value);
         sys_futex(lock, FUTEX_WAIT_PRIVATE, 1, NULL, NULL, 0);
         value = xchg(lock, 1);
     }
-    //printf("%d locked\n", pthread_self()%10000);
 }
 
+/**
+ * Release the given mutex
+ * Notice that release a lock not hold by itself will cause unpredictable result
+ * @param lock Pointer to the spin-lock want to release
+ */
 void mutex_release(mutex_t *lock) {
-    while (xchg(lock, 0)) ;
-    //printf("%d unlock : %d\n", pthread_self()%10000, *lock);
+    xchg(lock, 0);
     sys_futex(lock, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
 }
 
+/**
+ * Initialize a two-phase lock, should be called before use
+ * @param lock Pointer to the lock need to be initialized
+ */
 void twophase_init(twophase_t *lock) {
     *lock = 0;
 }
 
-#define LOOP_MAX 1000
+/**
+ * Try to acquire the given two-phase lock
+ * Wait for some one to release first, the wait time is designated by the LOOP_MAX macro (defined below)
+ * If the lock still acquired by someone else after wait phase, it will sleep until someone release the lock
+ * @param lock Pointer to the two-phase lock want to obtain
+ */
+#define LOOP_MAX 100
 void twophase_acquire(twophase_t *lock) {
     int i, value = 1;
     for (i = 0; i < LOOP_MAX; i++) {
@@ -92,16 +129,22 @@ void twophase_acquire(twophase_t *lock) {
         }
         cpu_pause();
     }
+
     if (value == 1) {
         value = xchg(lock, 2);
     }
-
     while (value) {
         sys_futex(lock, FUTEX_WAIT_PRIVATE, 2, NULL, NULL, 0);
         value = xchg(lock, 2);
     }
 }
 
+/**
+ * Release the given two-phase lock
+ * In the first phase it will try to give the lock to someone awake
+ * If failed, it will wake up a sleeping thread on this lock
+ * @param lock Pointer to the two-phase lock want to release
+ */
 void twophase_release(twophase_t *lock) {
     int i;
 
@@ -112,56 +155,83 @@ void twophase_release(twophase_t *lock) {
     }
 
     for (i = 0; i < LOOP_MAX; i++) {
-        if (*lock && cmpxchg(lock, 1, 2)) {
-            return;
+        if (*lock) {
+            if (cmpxchg(lock, 1, 2)) {
+                return;
+            }
         }
+        cpu_pause();
     }
 
     sys_futex(lock, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
 }
 
-
-void cond_init(cond_t* lock) {
-    lock->seq = 0;
-    lock->mutex = NULL;
+/**
+ * Initialize a condition variable, should be called before use
+ * @param cv Pointer to the condition variable need to be initialized
+ */
+void cond_init(cond_t* cv) {
+    cv->seq = 0;
+    cv->mutex = NULL;
 }
 
-void cond_wait(cond_t* lock, mutex_t* mutex) {
-    int old_seq = lock->seq;
+/**
+ * Wait a thread on the given condition variable
+ * The caller will sleep on the given cv, its mutex will be released
+ * Note that the mutex should be two-phase type since cv need extra information in mutex
+ * @param cv    Pointer the the condition variable to wait on
+ * @param mutex The mutex owned by caller, will be released
+ */
+void cond_wait(cond_t* cv, twophase_t* mutex) {
+    int old_seq = cv->seq;
 
-    if (lock->mutex != mutex) {
-        if (lock->mutex != NULL) { // TODO: ERROR
+    if (cv->mutex != mutex) {
+        if (cv->mutex != NULL) { // TODO: ERROR
             return;
         }
-        cmpxchg(&lock->mutex, NULL, mutex);
-        if (lock->mutex != mutex) { // TODO: ERROR
+        cmpxchg(&cv->mutex, NULL, mutex);
+        if (cv->mutex != mutex) { // TODO: ERROR
             return;
         }
     }
 
-    mutex_release(mutex);
+    twophase_release(mutex);
 
-    sys_futex(&lock->seq, FUTEX_WAIT, old_seq, NULL, NULL, 0);
+    sys_futex(&cv->seq, FUTEX_WAIT_PRIVATE, old_seq, NULL, NULL, 0);
 
     while (xchg(mutex, 2)) {
-        sys_futex(mutex, FUTEX_WAIT, 2, NULL, NULL, 0);
+        sys_futex(mutex, FUTEX_WAIT_PRIVATE, 2, NULL, NULL, 0);
     }
 }
 
-void cond_signal(cond_t* lock) {
-    lock->seq++;
-    sys_futex(&lock->seq, FUTEX_WAKE, 1, NULL, NULL, 0);
+/**
+ * Wake up a thread waiting on the given condition variable
+ * @param cv The condition variable to receive a signal
+ */
+void cond_signal(cond_t* cv) {
+    atomic_add(&cv->seq, 1);
+    sys_futex(&cv->seq, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
 }
 
-void cond_broadcast(cond_t* lock) {
-    mutex_t* old_mutex = lock->mutex;
+/**
+ * Wake up ALL threads waiting on the given condition variable
+ * @param cv The condition variable to receive a broadcast
+ */
+void cond_broadcast(cond_t* cv) {
+    mutex_t* old_mutex = cv->mutex;
     if (old_mutex == NULL) {
         return;
     }
-    lock->seq++;
-    sys_futex(&lock->seq, FUTEX_REQUEUE, 1, (void*)2147483647, old_mutex, 0);
+    atomic_add(&cv->seq, 1);
+
+    // wake up 1 waiting thread, requeue other threads on mutex to avoid context switch
+    sys_futex(&cv->seq, FUTEX_REQUEUE_PRIVATE, 1, (void*) 0x0FFFFFFF, old_mutex, 0);
 }
 
+/**
+ * Initialize a read-write lock, should be called before use
+ * @param lock Pointer to the read-write lock need to be initialized
+ */
 void rwlock_init(rwlock_t* lock) {
 #if defined(LOCK_PRWLOCK)
     pthread_rwlock_init(lock, NULL);
@@ -170,116 +240,82 @@ void rwlock_init(rwlock_t* lock) {
     lock->writers = 0;
     lock->read_waiters = 0;
     lock->write_waiters = 0;
-    mutex_init(&lock->mutex);
-
-    lock->writer_preferred = 1; // enable this to prefer writer
-#elif defined(LOCK_RWLOCK2)
-    lock->readers = 0;
-    lock->writers = 0;
-    lock->read_waiters = 0;
-    lock->write_waiters = 0;
-    mutex_init(&lock->mutex);
+    twophase_init(&lock->mutex);
     cond_init(&lock->reader_lock);
     cond_init(&lock->writer_lock);
 #endif
 }
 
+/**
+ * Acquire the read-end of the given read-write lock
+ * @param lock Pointer to the read-write lock to be acquired
+ */
 void rwlock_rdlock(rwlock_t *lock) {
 #if defined(LOCK_PRWLOCK)
     pthread_rwlock_rdlock(lock);
 #elif defined(LOCK_RWLOCK)
-    mutex_acquire(&lock->mutex);
-    while (lock->writers || (lock->write_waiters && lock->writer_preferred)) {
-        lock->read_waiters++;
-        mutex_release(&lock->mutex);
-        sys_futex(&lock->read_waiters, FUTEX_WAIT_PRIVATE, 1, NULL, NULL, 0);
-        mutex_acquire(&lock->mutex);
-        lock->read_waiters--;
-    }
-    lock->readers++;
-    mutex_release(&lock->mutex);
-#elif defined(LOCK_RWLOCK2)
-    mutex_acquire(&lock->mutex);
+    twophase_acquire(&lock->mutex);
     while (lock->writers || lock->write_waiters) {
         lock->read_waiters++;
         cond_wait(&lock->reader_lock, &lock->mutex);
         lock->read_waiters--;
     }
     lock->readers++;
-    mutex_release(&lock->mutex);
+    twophase_release(&lock->mutex);
 #endif
 }
 
+/**
+ * Acquire the write-end of the given read-write lock
+ * @param lock Pointer to the read-write lock to be acquired
+ */
 void rwlock_wrlock(rwlock_t *lock) {
 #if defined(LOCK_PRWLOCK)
     pthread_rwlock_wrlock(lock);
 #elif defined(LOCK_RWLOCK)
-    mutex_acquire(&lock->mutex);
-    while (lock->readers || lock->writers) {
-        lock->write_waiters++;
-        mutex_release(&lock->mutex);
-        sys_futex(&lock->write_waiters, FUTEX_WAIT_PRIVATE, 1, NULL, NULL, 0);
-        mutex_acquire(&lock->mutex);
-        lock->write_waiters--;
-    }
-    lock->writers = 1;
-    mutex_release(&lock->mutex);
-#elif defined(LOCK_RWLOCK2)
-    mutex_acquire(&lock->mutex);
+    twophase_acquire(&lock->mutex);
     while (lock->readers || lock->writers) {
         lock->write_waiters++;
         cond_wait(&lock->writer_lock, &lock->mutex);
         lock->write_waiters--;
     }
     lock->writers = 1;
-    mutex_release(&lock->mutex);
+    twophase_release(&lock->mutex);
 #endif
 }
 
+/**
+ * Release the read-write lock, for both read and write end according to POSIX standard
+ * Note this implement slightly favour the writers
+ * @param lock Pointer to the read-write to be released
+ */
 void rwlock_unlock(rwlock_t* lock) {
 #if defined(LOCK_PRWLOCK)
     pthread_rwlock_unlock(lock);
 #elif defined(LOCK_RWLOCK)
-    mutex_acquire(&lock->mutex);
-    if (lock->readers) { // if there're readers
+    twophase_acquire(&lock->mutex);
+    if (lock->readers) {
         lock->readers--;
-        if (lock->readers) { // if still have other readers
-            mutex_release(&lock->readers);
-            return;
+        if (lock->write_waiters) {
+            cond_signal(&lock->writer_lock);
         }
-    } else {
+    } else if (lock->writers) {
         lock->writers = 0;
-    }
-    mutex_release(&lock->mutex);
-
-    if (lock->write_waiters) { // wake a writer first
-        sys_futex(&lock->write_waiters, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
-    } else if (lock->read_waiters) { // wake all readers
-        sys_futex(&lock->read_waiters, FUTEX_WAKE_PRIVATE, 2147483647, NULL, NULL, 0);
-    }
-
-#elif defined(LOCK_RWLOCK2)
-    mutex_acquire(&lock->mutex);
-    if (lock->readers) { // if there're readers
-        lock->readers--;
-        if (lock->readers) { // if still have other readers
-            mutex_release(&lock->readers);
-            return;
+        if (lock->write_waiters) {
+            cond_signal(&lock->writer_lock);
+        } else if (lock->read_waiters) {
+            cond_broadcast(&lock->reader_lock);
         }
-    } else {
-        lock->writers = 0;
     }
-    mutex_release(&lock->mutex);
-
-    if (lock->write_waiters) { // wake a writer first
-        cond_signal(&lock->writer_lock);
-    } else if (lock->read_waiters) { // wake all readers
-        cond_broadcast(&lock->reader_lock);
-    }
+    twophase_release(&lock->mutex);
 #endif
 }
 
-
+/**
+ * The generic lock initialization method, not use macro for the debug consideration
+ * The lock type is designated by the macros defined in header file
+ * @param lock A pointer to the lock to be initialized
+ */
 void lock_init(lock_t* lock) {
 #if defined(LOCK_MUTEX)
     mutex_init(lock);
@@ -289,11 +325,16 @@ void lock_init(lock_t* lock) {
     twophase_init(lock);
 #elif defined(LOCK_PTHREAD)
     pthread_mutex_init(lock, NULL);
-#elif defined(LOCK_RWLOCK)
+#elif defined(LOCK_RWLOCK) || defined(LOCK_PRWLOCK)
     rwlock_init(lock);
 #endif
 }
 
+/**
+ * The generic lock acquire method
+ * Note that read-write locks DO NOT call this function
+ * @param lock A pointer to the lock to be acquired
+ */
 void lock_acquire(lock_t* lock) {
 #if defined(LOCK_MUTEX)
     mutex_acquire(lock);
@@ -306,6 +347,10 @@ void lock_acquire(lock_t* lock) {
 #endif
 }
 
+/**
+ * The generic lock release method
+ * @param lock A pointer to the lock to be released
+ */
 void lock_release(lock_t* lock) {
 #if defined(LOCK_MUTEX)
     mutex_release(lock);
@@ -315,7 +360,7 @@ void lock_release(lock_t* lock) {
     twophase_release(lock);
 #elif defined(LOCK_PTHREAD)
     pthread_mutex_unlock(lock);
-#elif defined(LOCK_RWLOCK)
+#elif defined(LOCK_RWLOCK) || defined(LOCK_PRWLOCK)
     rwlock_unlock(lock);
 #endif
 }
