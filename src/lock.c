@@ -10,7 +10,16 @@
 
 #define atomic_add(P, V) __sync_add_and_fetch((P), (V))
 
-
+/**
+ * Provide a method for waiting until a certain condition becomes true
+ * @param addr1 A pointer to a futex word
+ * @param op Options that specify the operation to be performed
+ * @param val1 A value whose meaning and purpose depends on op
+ * @param timeout A pointer to a timespec structure that specifies a timeout for the operation.
+ * @param addr2 A pointer to a second futex word that is employed by the operation
+ * @param val3 A value whose meaning and purpose depends on op
+ * @return
+ */
 static long sys_futex(void *addr1, int op, int val1, struct timespec *timeout, void *addr2, int val3) {
     return syscall(SYS_futex, addr1, op, val1, timeout, addr2, val3);
 }
@@ -24,10 +33,12 @@ static inline void cpu_pause(void) {
 }
 
 /**
- * Exchange value in addr and newval atomically
- * @param addr   The
- * @param newval
- * @return
+ * Using embedded assembly instruction "xchg"
+ * This instruction implements atomic operation
+ * Exchange values from the pointer addr to the newval
+ * @param addr A pointer to the mutex value
+ * @param newval The new value to be swaped
+ * @return The previous value of the pointer addr referenced
  */
 static inline unsigned xchg(void *addr, unsigned newval) {
     asm volatile("xchgl %0, %1"
@@ -37,6 +48,17 @@ static inline unsigned xchg(void *addr, unsigned newval) {
     return newval;
 }
 
+/**
+ * Using embedded assembly instruction "cmpxchg"
+ * This instruction implements atomic operation
+ * Compare the value of the pointer addr pointed with oldval
+ * if equal, put newval into the position of the addr pointer and return to oldval
+ * return to the value pointed by addr instead
+ * @param addr A pointer to the mutex value
+ * @param oldval A value to be compared
+ * @param newval A value to write into addr
+ * @return oldval or *addr
+ */
 static inline uint cmpxchg(volatile unsigned int *addr, unsigned int oldval, unsigned int newval) {
     uint ret;
     asm volatile("lock; cmpxchgl %1, %2"
@@ -96,7 +118,7 @@ void mutex_acquire(mutex_t *lock) {
 }
 
 /**
- * Release the given mutex
+ * Release the given mutex and wake up threads in waiting condition
  * Notice that release a lock not hold by itself will cause unpredictable result
  * @param lock Pointer to the spin-lock want to release
  */
@@ -114,9 +136,12 @@ void twophase_init(twophase_t *lock) {
 }
 
 /**
- * Try to acquire the given two-phase lock
+ * Try to acquire the given two-phase lock in the loop
  * Wait for some one to release first, the wait time is designated by the LOOP_MAX macro (defined below)
  * If the lock still acquired by someone else after wait phase, it will sleep until someone release the lock
+ * lock = 0 means unlock state;
+ * lock = 1 means the lock has beed aquaired and has no thread blocking;
+ * lock = 2 means the lock has beed aquaired and at least one thread is sleeping;
  * @param lock Pointer to the two-phase lock want to obtain
  */
 #define LOOP_MAX 100
@@ -195,11 +220,11 @@ void cond_wait(cond_t* cv, twophase_t* mutex) {
         }
     }
 
-    twophase_release(mutex);
+    twophase_release(mutex);	// release the mutex
 
-    sys_futex(&cv->seq, FUTEX_WAIT_PRIVATE, old_seq, NULL, NULL, 0);
+    sys_futex(&cv->seq, FUTEX_WAIT_PRIVATE, old_seq, NULL, NULL, 0);	// wait the current thread on seq
 
-    while (xchg(mutex, 2)) {
+    while (xchg(mutex, 2)) {	// get the mutex or wait
         sys_futex(mutex, FUTEX_WAIT_PRIVATE, 2, NULL, NULL, 0);
     }
 }
@@ -224,8 +249,8 @@ void cond_broadcast(cond_t* cv) {
     }
     atomic_add(&cv->seq, 1);
 
-    // wake up 1 waiting thread, requeue other threads on mutex to avoid context switch
-    sys_futex(&cv->seq, FUTEX_REQUEUE_PRIVATE, 1, (void*) 0x0FFFFFFF, old_mutex, 0);
+    // wake up 1 waiting thread, requeue other threads on mutex to avoid thundering herd
+    sys_futex(&cv->seq, FUTEX_REQUEUE_PRIVATE, 1, (void*) 0x0FFFFFFF, old_mutex, 0);	// *((int*) 0x0FFFFFFF)
 }
 
 /**
@@ -248,6 +273,8 @@ void rwlock_init(rwlock_t* lock) {
 
 /**
  * Acquire the read-end of the given read-write lock
+ * The calling thread acquires the read lock if no writer hold the lock
+ * and there are no writers in blocked on the lock.
  * @param lock Pointer to the read-write lock to be acquired
  */
 void rwlock_rdlock(rwlock_t *lock) {
@@ -267,6 +294,8 @@ void rwlock_rdlock(rwlock_t *lock) {
 
 /**
  * Acquire the write-end of the given read-write lock
+ * The calling thread acquires the write lock if no other thread holds the rwlock
+ * Otherwise, the thread shall block until it can acquire the rwlock
  * @param lock Pointer to the read-write lock to be acquired
  */
 void rwlock_wrlock(rwlock_t *lock) {
@@ -286,6 +315,12 @@ void rwlock_wrlock(rwlock_t *lock) {
 
 /**
  * Release the read-write lock, for both read and write end according to POSIX standard
+ * If this function is called by a read lock:
+ * firstly, if there are other writers blocked currently, one write thread(s) shall acquire the lock.
+ * otherwise, the rwlock shall turn into unlocked state.
+ * If this function is called by a write lock:
+ * firstly, if there are other writers blocked currently, one write thread shall acquire the lock.
+ * secondly, if there are other readers blocked currently, all of the reader threads shall be awakened.
  * Note this implement slightly favour the writers
  * @param lock Pointer to the read-write to be released
  */
@@ -299,6 +334,7 @@ void rwlock_unlock(rwlock_t* lock) {
         if (lock->write_waiters) {
             cond_signal(&lock->writer_lock);
         }
+		// reader thread must be awakened by writer thread?
     } else if (lock->writers) {
         lock->writers = 0;
         if (lock->write_waiters) {
