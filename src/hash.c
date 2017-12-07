@@ -3,7 +3,7 @@
 /**
  * Initialize the hash table with given bucket size
  * @param hash A pointer to hash table
- * @param size designated bucket size
+ * @param size Designated bucket size
  */
 void hash_init(hash_t *hash, int size) {
     int i;
@@ -51,7 +51,7 @@ void* hash_lookup(hash_t *hash, unsigned int key) {
  * Remove an given hash table and free the pointer of it
  * @param hash The pointer to hash table
  */
-void* hash_destroy(hash_t *hash) {
+void hash_destroy(hash_t *hash) {
     int i;
     for (i = 0; i < hash->bucket_size; i++) {
         list_destroy(&hash->lists[i]);

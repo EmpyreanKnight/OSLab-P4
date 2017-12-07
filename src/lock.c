@@ -16,6 +16,8 @@
  * @param op Options that specify the operation to be performed
  * @param val1 A value whose meaning and purpose depends on op
  * @param timeout A pointer to a timespec structure that specifies a timeout for the operation.
+ * For some operations, the least significant four bytes of this argument are instead used as an integer
+ * whose meaning is determined by the operation
  * @param addr2 A pointer to a second futex word that is employed by the operation
  * @param val3 A value whose meaning and purpose depends on op
  * @return
@@ -33,9 +35,9 @@ static inline void cpu_pause(void) {
 }
 
 /**
- * Using embedded assembly instruction "xchg"
- * This instruction implements atomic operation
- * Exchange values from the pointer addr to the newval
+ * Calling embedded assembly instruction "xchg"
+ * This instruction completes atomic operation of
+ * exchanging values from the pointer addr to the newval
  * @param addr A pointer to the mutex value
  * @param newval The new value to be swaped
  * @return The previous value of the pointer addr referenced
@@ -49,9 +51,9 @@ static inline unsigned xchg(void *addr, unsigned newval) {
 }
 
 /**
- * Using embedded assembly instruction "cmpxchg"
- * This instruction implements atomic operation
- * Compare the value of the pointer addr pointed with oldval
+ * Calling embedded assembly instruction "cmpxchg"
+ * This instruction completes atomic operation of
+ * comparing the value of the pointer addr pointed with oldval,
  * if equal, put newval into the position of the addr pointer and return to oldval
  * return to the value pointed by addr instead
  * @param addr A pointer to the mutex value
@@ -59,11 +61,11 @@ static inline unsigned xchg(void *addr, unsigned newval) {
  * @param newval A value to write into addr
  * @return oldval or *addr
  */
-static inline uint cmpxchg(volatile unsigned int *addr, unsigned int oldval, unsigned int newval) {
+static inline uint cmpxchg(void *addr, unsigned int oldval, unsigned int newval) {
     uint ret;
     asm volatile("lock; cmpxchgl %1, %2"
     : "=a" (ret)
-    : "r" (newval), "m" (*addr), "0" (oldval)
+    : "r" (newval), "m" (*(volatile unsigned *)addr), "0" (oldval)
     : "memory");
     return ret;
 }
@@ -118,7 +120,7 @@ void mutex_acquire(mutex_t *lock) {
 }
 
 /**
- * Release the given mutex and wake up threads in waiting condition
+ * Release the given mutex and wake up a thread in waiting condition
  * Notice that release a lock not hold by itself will cause unpredictable result
  * @param lock Pointer to the spin-lock want to release
  */
@@ -136,7 +138,7 @@ void twophase_init(twophase_t *lock) {
 }
 
 /**
- * Try to acquire the given two-phase lock in the loop
+ * Acquire the given two-phase in two phases
  * Wait for some one to release first, the wait time is designated by the LOOP_MAX macro (defined below)
  * If the lock still acquired by someone else after wait phase, it will sleep until someone release the lock
  * lock = 0 means unlock state;
@@ -165,7 +167,7 @@ void twophase_acquire(twophase_t *lock) {
 }
 
 /**
- * Release the given two-phase lock
+ * Release the given two-phase lock in two phases
  * In the first phase it will try to give the lock to someone awake
  * If failed, it will wake up a sleeping thread on this lock
  * @param lock Pointer to the two-phase lock want to release
@@ -211,11 +213,13 @@ void cond_wait(cond_t* cv, twophase_t* mutex) {
     int old_seq = cv->seq;
 
     if (cv->mutex != mutex) {
-        if (cv->mutex != NULL) { // TODO: ERROR
+        if (cv->mutex != NULL) {
+            perror("cond mutex already exists!");
             return;
         }
-        cmpxchg(&cv->mutex, NULL, mutex);
-        if (cv->mutex != mutex) { // TODO: ERROR
+        cmpxchg(&cv->mutex, 0, (unsigned)(unsigned long)mutex);
+        if (cv->mutex != mutex) {
+            perror("cond mutex incompatible!");
             return;
         }
     }
@@ -249,7 +253,7 @@ void cond_broadcast(cond_t* cv) {
     }
     atomic_add(&cv->seq, 1);
 
-    // wake up 1 waiting thread, requeue other threads on mutex to avoid thundering herd
+    // wake up 1 waiting thread, requeue other threads on mutex to avoid thundering herd effect
     sys_futex(&cv->seq, FUTEX_REQUEUE_PRIVATE, 1, (void*) 0x0FFFFFFF, old_mutex, 0);	// *((int*) 0x0FFFFFFF)
 }
 

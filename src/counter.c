@@ -2,7 +2,7 @@
 
 /**
  * Initialization part of counter
- * @param c pointer to a counter
+ * @param c Pointer to a counter
  * @param value Initial value of the counter
  */
 void counter_init(counter_t *c, int value) {
@@ -12,8 +12,8 @@ void counter_init(counter_t *c, int value) {
 
 /**
  * Get the value of the counter
- * @param c pointer to a counter
- * @return the current value of the counter
+ * @param c Pointer to a counter
+ * @return The current value of the counter
  */
 int counter_get_value(counter_t *c) {
 #if defined(LOCK_RWLOCK)
@@ -28,7 +28,7 @@ int counter_get_value(counter_t *c) {
 
 /**
  * Increase the counter by 1
- * @param c pointer to a counter
+ * @param c Pointer to a counter
  */
 void counter_increment(counter_t *c) {
 #if defined(LOCK_RWLOCK)
@@ -42,7 +42,7 @@ void counter_increment(counter_t *c) {
 
 /**
  * Decrease the counter by 1
- * @param c pointer to a counter
+ * @param c Pointer to a counter
  */
 void counter_decrement(counter_t *c) {
 #if defined(LOCK_RWLOCK)

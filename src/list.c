@@ -12,7 +12,7 @@ void list_init(list_t *list) {
 /**
  * Insert a new node with value key at the head of the list
  * @param list A pointer to a list
- * @param key the value to be inserted
+ * @param key The value to be inserted
  */
 void list_insert(list_t *list, unsigned int key) {
     node_t *new_node = malloc(sizeof(node_t));

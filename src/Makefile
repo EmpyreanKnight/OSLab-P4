@@ -5,10 +5,10 @@ P4:
 	cc -lcounter -llist -lhash -L. -o P4 main.c libcounter.so liblist.so libhash.so -lpthread
 
 libcounter.so:
-	cc -shared -fPIC counter.c lock.h lock.c -o libcounter.so
+	cc -shared -fPIC counter.c lock.h lock.c -o libcounter.so -Wall -Werror
 
 liblist.so:
-	cc -shared -fPIC list.c lock.h lock.c -o liblist.so
+	cc -shared -fPIC list.c lock.h lock.c -o liblist.so -Wall -Werror
 
 libhash.so:
-	cc -shared -fPIC hash.c list.h list.c lock.h lock.c -o libhash.so
+	cc -shared -fPIC hash.c list.h list.c lock.h lock.c -o libhash.so -Wall -Werror

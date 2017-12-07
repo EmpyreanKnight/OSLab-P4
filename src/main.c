@@ -110,6 +110,25 @@ void* test5(void* args) {
     return NULL;
 }
 
+long long timeTotal[THREAD_COUNT];
+int opCouunt[THREAD_COUNT];
+
+void* test6(void* args) {
+    int i;
+    int id = (int)args;
+    timeTotal[id] = opCouunt[id] = 0;
+    struct timeval tvb, tve;
+    for (i = 0; i < MAX_N; i++) {
+        gettimeofday(&tvb, NULL);
+        counter_get_value(&counter);
+        gettimeofday(&tve, NULL);
+        timeTotal[id] += tve.tv_usec - tvb.tv_usec;
+        opCouunt[id]++;
+    }
+    return NULL;
+}
+
+// test correctness of counter
 void main1() {
     int i;
     counter_init(&counter, 0);
@@ -125,6 +144,7 @@ void main1() {
     printf("Counter value: %d\n", counter_get_value(&counter));
 }
 
+// test performance of cv
 void main2() {
     int i;
     test_var = 0;
@@ -144,6 +164,7 @@ void main2() {
     printf("Test var: %d\n", test_var);
 }
 
+// test performance of list
 void main3() {
     int i;
     list_init(&list);
@@ -163,6 +184,7 @@ void main3() {
     printf("List sum: %lld vs %lld\n", list_sum(&list), glob_sum);
 }
 
+// test performance of counter
 void main4() {
     int i;
     counter_init(&counter, 0);
@@ -177,7 +199,26 @@ void main4() {
     printf("Time: %f\n", endTimer());
 }
 
+// test fairness
+void main5() {
+    int i;
+    counter_init(&counter, 0);
+    pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
+    for (i = 0; i < THREAD_COUNT; i++) {
+        pthread_create(&threads[i], NULL, test6, (void*)i);
+    }
+    for (i = 0; i < THREAD_COUNT; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("Average lock acquire time:\n");
+    for (i = 0; i < THREAD_COUNT; i++) {
+        printf("%f ", 1.0 * timeTotal[i] / opCouunt[i]);
+    }
+    printf("\n");
+}
+
 int main() {
-    main3();
+    main5();
     return 0;
 }
