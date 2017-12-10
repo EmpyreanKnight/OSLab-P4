@@ -39,7 +39,7 @@ static inline void cpu_pause(void) {
  * This instruction completes atomic operation of
  * exchanging values from the pointer addr to the newval
  * @param addr A pointer to the mutex value
- * @param newval The new value to be swaped
+ * @param newval The new value to be swapped
  * @return The previous value of the pointer addr referenced
  */
 static inline unsigned xchg(void *addr, unsigned newval) {
@@ -142,11 +142,11 @@ void twophase_init(twophase_t *lock) {
  * Wait for some one to release first, the wait time is designated by the LOOP_MAX macro (defined below)
  * If the lock still acquired by someone else after wait phase, it will sleep until someone release the lock
  * lock = 0 means unlock state;
- * lock = 1 means the lock has beed aquaired and has no thread blocking;
- * lock = 2 means the lock has beed aquaired and at least one thread is sleeping;
+ * lock = 1 means the lock has been acquired and has no thread blocking;
+ * lock = 2 means the lock has been acquired and at least one thread is sleeping;
  * @param lock Pointer to the two-phase lock want to obtain
  */
-#define LOOP_MAX 100
+#define LOOP_MAX 100000
 void twophase_acquire(twophase_t *lock) {
     int i, value = 1;
     for (i = 0; i < LOOP_MAX; i++) {
@@ -217,7 +217,7 @@ void cond_wait(cond_t* cv, twophase_t* mutex) {
             perror("cond mutex already exists!");
             return;
         }
-        cmpxchg(&cv->mutex, 0, (unsigned)(unsigned long)mutex);
+        cmpxchg(&cv->mutex, (unsigned)(unsigned long)NULL, (unsigned)(unsigned long)mutex);
         if (cv->mutex != mutex) {
             perror("cond mutex incompatible!");
             return;
@@ -264,7 +264,7 @@ void cond_broadcast(cond_t* cv) {
 void rwlock_init(rwlock_t* lock) {
 #if defined(LOCK_PRWLOCK)
     pthread_rwlock_init(lock, NULL);
-#elif defined(LOCK_RWLOCK)
+#else //if defined(LOCK_RWLOCK)
     lock->readers = 0;
     lock->writers = 0;
     lock->read_waiters = 0;
@@ -284,7 +284,7 @@ void rwlock_init(rwlock_t* lock) {
 void rwlock_rdlock(rwlock_t *lock) {
 #if defined(LOCK_PRWLOCK)
     pthread_rwlock_rdlock(lock);
-#elif defined(LOCK_RWLOCK)
+#else //if defined(LOCK_RWLOCK)
     twophase_acquire(&lock->mutex);
     while (lock->writers || lock->write_waiters) {
         lock->read_waiters++;
@@ -305,7 +305,7 @@ void rwlock_rdlock(rwlock_t *lock) {
 void rwlock_wrlock(rwlock_t *lock) {
 #if defined(LOCK_PRWLOCK)
     pthread_rwlock_wrlock(lock);
-#elif defined(LOCK_RWLOCK)
+#else //if defined(LOCK_RWLOCK)
     twophase_acquire(&lock->mutex);
     while (lock->readers || lock->writers) {
         lock->write_waiters++;
@@ -331,14 +331,14 @@ void rwlock_wrlock(rwlock_t *lock) {
 void rwlock_unlock(rwlock_t* lock) {
 #if defined(LOCK_PRWLOCK)
     pthread_rwlock_unlock(lock);
-#elif defined(LOCK_RWLOCK)
+#else //if defined(LOCK_RWLOCK)
     twophase_acquire(&lock->mutex);
     if (lock->readers) {
         lock->readers--;
         if (lock->write_waiters) {
             cond_signal(&lock->writer_lock);
         }
-		// reader thread must be awakened by writer thread?
+        // reader thread must be awakened by writer thread?
     } else if (lock->writers) {
         lock->writers = 0;
         if (lock->write_waiters) {

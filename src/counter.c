@@ -16,7 +16,7 @@ void counter_init(counter_t *c, int value) {
  * @return The current value of the counter
  */
 int counter_get_value(counter_t *c) {
-#if defined(LOCK_RWLOCK)
+#if defined(LOCK_RWLOCK) || defined(LOCK_PRWLOCK)
     rwlock_rdlock(&c->lock);
 #else
     lock_acquire(&c->lock);
@@ -31,7 +31,7 @@ int counter_get_value(counter_t *c) {
  * @param c Pointer to a counter
  */
 void counter_increment(counter_t *c) {
-#if defined(LOCK_RWLOCK)
+#if defined(LOCK_RWLOCK) || defined(LOCK_PRWLOCK)
     rwlock_wrlock(&c->lock);
 #else
     lock_acquire(&c->lock);
@@ -45,7 +45,7 @@ void counter_increment(counter_t *c) {
  * @param c Pointer to a counter
  */
 void counter_decrement(counter_t *c) {
-#if defined(LOCK_RWLOCK)
+#if defined(LOCK_RWLOCK) || defined(LOCK_PRWLOCK)
     rwlock_wrlock(&c->lock);
 #else
     lock_acquire(&c->lock);

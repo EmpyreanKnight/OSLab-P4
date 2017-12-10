@@ -11,8 +11,8 @@
  */
 //#define LOCK_SPIN
 //#define LOCK_MUTEX
-//#define LOCK_TWOPHASE
-#define LOCK_RWLOCK
+#define LOCK_TWOPHASE
+//#define LOCK_RWLOCK
 //#define LOCK_PTHREAD
 //#define LOCK_PRWLOCK
 
@@ -41,7 +41,7 @@ typedef struct {
  */
 #if defined(LOCK_PRWLOCK)
 typedef pthread_rwlock_t rwlock_t;
-#elif defined(LOCK_RWLOCK)
+#else
 typedef struct {
     twophase_t mutex;       /**< serialize operations on rwlock */
     cond_t reader_lock;     /**< the cv for readers */
@@ -51,8 +51,6 @@ typedef struct {
     unsigned read_waiters;  /**< counter for waiters on the read end */
     unsigned write_waiters; /**< counter for waiters on the write end */
 } rwlock_t;
-#else
-typedef int rwlock_t;
 #endif
 
 

@@ -2,9 +2,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <sys/time.h>
-#include <unistd.h>
 
-#include "lock.h"
 #include "counter.h"
 #include "list.h"
 #include "hash.h"
@@ -19,84 +17,30 @@ double endTimer() {
     return (tve.tv_sec - tvb.tv_sec) * 1000 + (tve.tv_usec - tvb.tv_usec) / 1000.0;
 }
 
-#define THREAD_COUNT 4
-#define MAX_N 100000
-#define SEED 1234
+int THREAD_COUNT = 4;
+int MAX_N = 20000;
+#define SEED 1551
+#define HASH_SIZE 1000
+
+#define READ_RATE 70
+#define INSERT_RATE 15
+#define RANGE 1000
 
 counter_t counter;
-cond_t cond;
-spinlock_t spin;
-pthread_mutex_t p_mutex;
-mutex_t mutex;
 list_t list;
-int test_var;
+hash_t hash;
 
-void* test(void* args) {
+void* test_lock(void *args) {
     int i;
-    srand(SEED);
     for (i = 0; i < MAX_N; i++) {
         counter_increment(&counter);
     }
-}
-
-void* test2(void* args) {
-    printf("thread %d to sleep.\n", (int)args);
-    twophase_acquire(&mutex);
-    cond_wait(&cond, &mutex);
-    twophase_release(&mutex);
-    test_var = test_var + 1;
-    printf("thread %d waked.\n", (int)args);
     return NULL;
 }
 
-void* test3(void* args) {
-    sleep(2);
-    printf("thread %d wake others.\n", (int)args);
-    cond_broadcast(&cond);
-    printf("thread %d broadcast.\n", (int)args);
-    return NULL;
-}
-
-#define READ_RATE 80
-#define INSERT_RATE 10
-#define RANGE 1000
-
-int glob_cnt;
-long long glob_sum;
-
-void* test4(void* args) {
+void* test_counter(void *args) {
     int i;
-    srand(SEED);
-    for (i = 0; i < MAX_N; i++) {
-        int rd = rand() % 100;
-        //pthread_mutex_lock(&p_mutex);
-        if (rd < READ_RATE) {
-            list_lookup(&list, rand() % RANGE);
-        } else if (rd < READ_RATE + INSERT_RATE) {
-            int value = rand() % RANGE;
-            list_insert(&list, value);
-            pthread_mutex_lock(&p_mutex);
-            glob_cnt++;
-            glob_sum+=value;
-            pthread_mutex_unlock(&p_mutex);
-        } else {
-            int value = rand() % RANGE;
-            if (list_lookup(&list, value) != NULL) {
-                list_delete(&list, value);
-                pthread_mutex_lock(&p_mutex);
-                glob_cnt--;
-                glob_sum -= value;
-                pthread_mutex_unlock(&p_mutex);
-            }
-        }
-        //pthread_mutex_unlock(&p_mutex);
-    }
-    return NULL;
-}
-
-void* test5(void* args) {
-    int i;
-    srand(SEED);
+    srand(SEED + (unsigned)(unsigned long)args);
     for (i = 0; i < MAX_N; i++) {
         int rd = rand() % 100;
         if (rd < READ_RATE) {
@@ -110,115 +54,253 @@ void* test5(void* args) {
     return NULL;
 }
 
-long long timeTotal[THREAD_COUNT];
-int opCouunt[THREAD_COUNT];
-
-void* test6(void* args) {
+void* test_list(void *args) {
     int i;
-    int id = (int)args;
-    timeTotal[id] = opCouunt[id] = 0;
-    struct timeval tvb, tve;
+    srand(SEED + (unsigned)(unsigned long)args);
     for (i = 0; i < MAX_N; i++) {
-        gettimeofday(&tvb, NULL);
-        counter_get_value(&counter);
-        gettimeofday(&tve, NULL);
-        timeTotal[id] += tve.tv_usec - tvb.tv_usec;
-        opCouunt[id]++;
+        int rd = rand() % 100;
+        if (rd < READ_RATE) {
+            list_lookup(&list, (unsigned)(rand() % RANGE));
+        } else if (rd < READ_RATE + INSERT_RATE) {
+            int value = rand() % RANGE;
+            list_insert(&list, (unsigned)value);
+        } else {
+            int value = rand() % RANGE;
+            list_delete(&list, (unsigned)value);
+        }
     }
     return NULL;
 }
 
-// test correctness of counter
-void main1() {
+void* test_list_order(void *args) {
+    int i;
+    srand(SEED + (unsigned)(unsigned long)args);
+    for (i = 0; i < MAX_N; i++) {
+        int value = rand() % RANGE;
+        list_insert(&list, (unsigned) value);
+    }
+    for (i = 0; i < MAX_N; i++) {
+        int value = rand() % RANGE;
+        list_delete(&list, (unsigned) value);
+    }
+    return NULL;
+}
+
+void* test_hash(void *args) {
+    int i;
+    srand(SEED + (unsigned)(unsigned long)args);
+    for (i = 0; i < MAX_N; i++) {
+        int rd = rand() % 100;
+        if (rd < READ_RATE) {
+            hash_lookup(&hash, (unsigned)(rand() % RANGE));
+        } else if (rd < READ_RATE + INSERT_RATE) {
+            int value = rand() % RANGE;
+            hash_insert(&hash, (unsigned)value);
+        } else {
+            int value = rand() % RANGE;
+            hash_delete(&hash, (unsigned)value);
+        }
+    }
+    return NULL;
+}
+
+void* test_hash_order(void *args) {
+    int i;
+    srand(SEED + (unsigned)(unsigned long)args);
+    for (i = 0; i < MAX_N; i++) {
+        int value = rand() % RANGE;
+        hash_insert(&hash, (unsigned) value);
+    }
+    for (i = 0; i < MAX_N; i++) {
+        int value = rand() % RANGE;
+        hash_delete(&hash, (unsigned) value);
+    }
+    return NULL;
+}
+
+double timeTotal[100];
+
+void* test_exec(void *args) {
+    int i;
+    int id = (int)(unsigned long)args;
+    struct timeval tvb, tve;
+    gettimeofday(&tvb, NULL);
+    for (i = 0; i < MAX_N; i++) {
+        counter_increment(&counter);
+    }
+    gettimeofday(&tve, NULL);
+    timeTotal[id] = (tve.tv_usec - tvb.tv_usec) / 1000.0 + (tve.tv_sec - tvb.tv_sec) * 1000.0;
+    return NULL;
+}
+
+void* test_acquire(void *args) {
+    int i;
+    int id = (int)(unsigned long)args;
+    timeTotal[id] = 0;
+    struct timeval tvb, tve;
+    for (i = 0; i < MAX_N; i++) {
+        gettimeofday(&tve, NULL);
+        if (i > 0) {
+            timeTotal[id] += (tve.tv_usec - tvb.tv_usec) / 1000.0 + (tve.tv_sec - tvb.tv_sec) * 1000.0;
+        }
+        gettimeofday(&tvb, NULL);
+        counter_increment(&counter);
+    }
+    return NULL;
+}
+
+void lock_performance() {
     int i;
     counter_init(&counter, 0);
     pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
+
     startTimer();
     for (i = 0; i < THREAD_COUNT; i++) {
-        pthread_create(&threads[i], NULL, test, NULL);
+        pthread_create(&threads[i], NULL, test_lock, (void *)(unsigned long) i);
     }
     for (i = 0; i < THREAD_COUNT; i++) {
         pthread_join(threads[i], NULL);
     }
-    printf("%f ms\n", endTimer());
-    printf("Counter value: %d\n", counter_get_value(&counter));
+
+    //printf("Lock runtime:\n");
+    printf("%f, ", endTimer());
 }
 
-// test performance of cv
-void main2() {
+void counter_performance() {
     int i;
-    test_var = 0;
-    mutex_init(&mutex);
-    cond_init(&cond);
+    counter_init(&counter, 0);
     pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
+
     startTimer();
-    printf("create threads.\n");
-    for (i = 0; i < THREAD_COUNT - 1; i++) {
-        pthread_create(&threads[i], NULL, test2, (void*)i);
+    for (i = 0; i < THREAD_COUNT; i++) {
+        pthread_create(&threads[i], NULL, test_counter, (void *)(unsigned long) i);
     }
-    pthread_create(&threads[THREAD_COUNT - 1], NULL, test3, (void*)i);
     for (i = 0; i < THREAD_COUNT; i++) {
         pthread_join(threads[i], NULL);
     }
-    printf("Time: %f\n", endTimer());
-    printf("Test var: %d\n", test_var);
+
+    //printf("Counter runtime:\n");
+    printf("%f, ", endTimer());
 }
 
-// test performance of list
-void main3() {
+void list_performance() {
     int i;
     list_init(&list);
-    pthread_mutex_init(&p_mutex, NULL);
-    glob_sum = 0;
-    glob_cnt = 0;
     pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
+
     startTimer();
     for (i = 0; i < THREAD_COUNT; i++) {
-        pthread_create(&threads[i], NULL, test4, (void*)i);
+        pthread_create(&threads[i], NULL, test_list, (void *)(unsigned long) i);
+        //pthread_create(&threads[i], NULL, test_list_order, (void *)(unsigned long) i);
     }
     for (i = 0; i < THREAD_COUNT; i++) {
         pthread_join(threads[i], NULL);
     }
-    printf("Time: %f\n", endTimer());
-    printf("Node count: %d vs %d\n", list_count(&list), glob_cnt);
-    printf("List sum: %lld vs %lld\n", list_sum(&list), glob_sum);
+
+    //printf("List runtime:\n");
+    printf("%f, ", endTimer());
+    list_destroy(&list);
 }
 
-// test performance of counter
-void main4() {
+void hash_performance() {
+    int i;
+    hash_init(&hash, HASH_SIZE);
+    pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
+
+    startTimer();
+    for (i = 0; i < THREAD_COUNT; i++) {
+        pthread_create(&threads[i], NULL, test_hash, (void *)(unsigned long) i);
+        //pthread_create(&threads[i], NULL, test_hash_order, (void *)(unsigned long) i);
+    }
+    for (i = 0; i < THREAD_COUNT; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    //printf("Hash runtime:\n");
+    printf("%f, ", endTimer());
+}
+
+void fairness_execution() {
     int i;
     counter_init(&counter, 0);
     pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
-    startTimer();
     for (i = 0; i < THREAD_COUNT; i++) {
-        pthread_create(&threads[i], NULL, test5, (void*)i);
+        pthread_create(&threads[i], NULL, test_exec, (void *)(unsigned long) i);
     }
     for (i = 0; i < THREAD_COUNT; i++) {
         pthread_join(threads[i], NULL);
     }
-    printf("Time: %f\n", endTimer());
+
+    //printf("Average execution time:\n");
+    printf("np.array([");
+    for (i = 0; i < THREAD_COUNT; i++) {
+        printf("%f, ", 1.0 * timeTotal[i]);
+    }
+    printf("\b\b]).var(),\n");
 }
 
-// test fairness
-void main5() {
+void fairness_reacquire() {
     int i;
     counter_init(&counter, 0);
     pthread_t* threads = malloc(sizeof(pthread_t)*THREAD_COUNT);
     for (i = 0; i < THREAD_COUNT; i++) {
-        pthread_create(&threads[i], NULL, test6, (void*)i);
+        pthread_create(&threads[i], NULL, test_acquire, (void *)(unsigned long) i);
     }
     for (i = 0; i < THREAD_COUNT; i++) {
         pthread_join(threads[i], NULL);
     }
 
-    printf("Average lock acquire time:\n");
+    //printf("Average reacquire time:\n");
+    printf("cv(np.array([");
     for (i = 0; i < THREAD_COUNT; i++) {
-        printf("%f ", 1.0 * timeTotal[i] / opCouunt[i]);
+        printf("%f, ", timeTotal[i]);
     }
-    printf("\n");
+    printf("\b\b])),\n");
 }
 
+// TODO: hash scaling, hash/list insertion/insertion&delete (serial/random)
 int main() {
-    main5();
+    int n = 6;
+    char* notice[] = {
+            "Lock performance",
+            "Counter performance",
+            "List performance",
+            "Hash performance",
+            "Fairness (execution)",
+            "Fairness (reacquire)"
+    };
+    printf("Test options:\n");
+    for (int i = 0; i < n; i++) {
+        printf("%s\t%d\n", notice[i], i);
+    }
+
+    int op;
+    scanf("%d", &op);
+
+    for (THREAD_COUNT = 1; THREAD_COUNT <= 8; THREAD_COUNT++) {
+        //printf("threads: %d, n: %d\n", THREAD_COUNT, MAX_N);
+        switch (op) {
+            case 0:
+                lock_performance();
+                break;
+            case 1:
+                counter_performance();
+                break;
+            case 2:
+                list_performance();
+                break;
+            case 3:
+                hash_performance();
+                break;
+            case 4:
+                fairness_execution();
+                break;
+            case 5:
+                fairness_reacquire();
+                break;
+            default:
+                printf("No such option!");
+        }
+    }
     return 0;
 }
